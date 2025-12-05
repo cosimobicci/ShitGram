@@ -1,0 +1,47 @@
+import pandas as pd
+import re
+import os
+import numpy as np
+
+def load_chat_data(file_name='_chat.txt'):
+    if not os.path.exists(file_name):
+        raise FileNotFoundError(f"⚠️ ERRORE: '{file_name}' mancante!")
+
+    print("📂 Lettura chat...")
+    with open(file_name, 'r', encoding='utf-8') as f:
+        chat_content = f.read()
+
+    matches = re.findall(r"^\[(\d{2}\/\d{2}\/\d{2}),\s(\d{2}:\d{2}:\d{2})\]\s([^:]+):\s(.*)$", chat_content, re.MULTILINE)
+    data = [{'Date_Str': m[0], 'Time_Str': m[1], 'User': m[2].strip(), 'Message_Content': m[3].strip()} for m in matches]
+    df = pd.DataFrame(data)
+    
+    df['Timestamp'] = pd.to_datetime(df['Date_Str'] + ' ' + df['Time_Str'], format='%d/%m/%y %H:%M:%S', errors='coerce')
+    df['Is_Poop'] = df['Message_Content'].str.contains('💩', regex=False)
+
+    # Logica Estrazione Posizione
+    df['Location'] = np.where(
+        (df['Message_Content'].str.contains(r'Posizione:|maps', regex=True).shift(-1) == True) & 
+        (df['User'].shift(-1) == df['User']), 
+        df['Message_Content'].shift(-1), None
+    )
+    
+    # Filtra solo le cagate
+    df = df[df['Is_Poop'] == True].copy()
+
+    def get_coords(text):
+        match = re.search(r'(-?\d+\.\d+),\s*(-?\d+\.\d+)', str(text))
+        return (float(match.group(1)), float(match.group(2))) if match else (np.nan, np.nan)
+
+    df[['Latitude', 'Longitude']] = df['Location'].apply(get_coords).apply(pd.Series)
+    df = df.dropna(subset=['Latitude', 'Longitude'])
+
+    # Mapping Utenti (Normalizzazione nomi)
+    user_mapping = {
+        'cosimobicci': 'Cosimo', 'riki nata': 'Riccardo', 'Federation non è rotto qualcosa Yonghong': 'Armando',
+        'Maurizio dalla sezione Marketing': 'Tommaso', 'Asia Mariani': 'Asia', 'Stefano Panichi': 'Stefano',
+        'Leo Chelsea': 'Leo', 'Luca Viezzoli': 'Luca', 'mariam': 'Mariam', 'Francesca Piersigilli': 'Francesca'
+    }
+    for k, v in user_mapping.items():
+        df['User'] = df['User'].str.replace(k, v, regex=False)
+
+    return df
